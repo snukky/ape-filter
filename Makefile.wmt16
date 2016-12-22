@@ -1,0 +1,85 @@
+TER = ./eval/runTER.py
+
+DATA_DIR = /work/wmt16/work/postedit/domain/mt/bac
+REF_DATA_DIR = /home/romang/work/postedit/data/wmt16
+
+ALL_DATA := $(shell find $(DATA_DIR)/de/ -name 'de.???' -printf '%f ')
+ALL_DATA_SPLIT := $(shell find $(DATA_DIR)/de/ -name 'de.???' -printf '%f.split ')
+OUT_DATA := $(shell find $(DATA_DIR)/de/ -name 'de.???' -printf '%f.out5 ')
+
+NEIGHBOURS = 1
+
+all: data.out5
+
+# DATA FILTERING
+data.out5: $(OUT_DATA)
+	cat de.*.out5 > $@
+
+de.%.out5: ref.dev.mt ref.dev.pe de.% de.%.split de.%.aln de.%.en de.%.en.aln ref.dev.ter
+	python ./ter_filter.py --bpe --clean -n $(NEIGHBOURS) --shuffle \
+		--run-ter-script $(TER) \
+		--ref-src $(word 1,$^) --ref-trg $(word 2,$^) \
+		--src $(word 3,$^) --trg $(word 3,$^).split \
+		--output $@ \
+		--add-to-outputs $(word 3,$^).aln $(word 3,$^).en $(word 3,$^).en.aln
+
+de.%: $(DATA_DIR)/de/de.%
+	ln -s $^ $@
+de.%.aln: $(DATA_DIR)/de/de.%.aln
+	ln -s $^ $@
+
+de.%.split: $(DATA_DIR)/split/de.%
+	ln -s $^ $@
+
+de.%.en: $(DATA_DIR)/en/de.%
+	ln -s $^ $@
+de.%.en.aln: $(DATA_DIR)/en/de.%.aln
+	ln -s $^ $@
+
+# UNFILTERED DATA
+de.raw: $(ALL_DATA)
+	cat $^ > $@
+de.raw.split: $(ALL_DATA_SPLIT)
+	cat $^ > $@
+
+# EVALUATION
+eval: de.raw.eval data.out5.eval
+
+data.out5.eval: de.out5.nobpe.src de.out5.nobpe.trg
+	python ./ter_filter.py --src $(word 1,$^) --trg $(word 2,$^) --clean --verbose 2>&1 | tee $@
+
+de.out5.nobpe.trg: data.out5
+	cut -f1 $^ | sed 's/@@ //g' > $@
+de.out5.nobpe.src: data.out5
+	cut -f2 $^ | sed 's/@@ //g' > $@
+
+de.raw.eval: de.raw.nobpe.src de.raw.nobpe.trg
+	python ./ter_filter.py --src $(word 1,$^) --trg $(word 2,$^) --clean --verbose 2>&1 | tee $@
+
+de.raw.nobpe.src: de.raw
+	sed 's/@@ //g' $^ > $@
+de.raw.nobpe.trg: de.raw.split
+	sed 's/@@ //g' $^ > $@
+
+# REFERENCES
+ref.dev.ter: ref.dev.mt ref.dev.pe
+	python $(TER) -s $(word 1,$^) -r $(word 2,$^) -i filter --no-clean > $@
+
+ref.dev.mt:
+	cp $(REF_DATA_DIR)/dev.mt $@
+ref.dev.pe:
+	cp $(REF_DATA_DIR)/dev.pe $@
+
+ref.train.mt:
+	cp $(REF_DATA_DIR)/train.mt $@
+ref.train.pe:
+	cp $(REF_DATA_DIR)/train.pe $@
+
+# CLEAN
+clean:
+	rm -rf ref.* de.*
+
+clean-all: clean
+	rm -f data.out5*
+
+.PHONY: all clean
